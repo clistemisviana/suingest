@@ -1852,7 +1852,8 @@ window.SGAuth = {
     try{
       await signInWithEmailAndPassword(auth, email, senha);
     }catch(e){
-      errBox.textContent = 'E-mail ou senha inválidos.';
+      console.error('Erro de login', e);
+      errBox.textContent = 'E-mail ou senha inválidos. (' + (e.code || e.message) + ')';
       errBox.style.display = 'block';
     }
   },
