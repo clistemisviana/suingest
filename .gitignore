@@ -1,0 +1,21 @@
+# SO
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
+
+# Node (se algum dia entrar tooling)
+node_modules/
+npm-debug.log*
+
+# Firebase (quando a migração acontecer)
+.firebase/
+firebase-debug.log
+.firebaserc.local
+
+# Segredos — nunca versionar chaves reais
+.env
+.env.local
+*-service-account.json
