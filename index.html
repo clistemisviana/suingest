@@ -507,7 +507,7 @@ function addCusto(out,rec,cat,animalId){
   if(rec.destinoTipo==='animal'&&rec.alvo===animalId)
     out.push({data:rec.data,cat,desc:cat==='racao'?rec.tipo:rec.descricao,qtd:rec.qtd,volume:rec.volume,valor:rec.valor,origem:'ind',srcId:rec.id,srcKind:cat});
   else if((rec.destinoTipo==='lote'||rec.destinoTipo==='geral')&&rec.participantes&&rec.participantes.includes(animalId))
-    out.push({data:rec.data,cat,desc:cat==='racao'?rec.tipo:rec.descricao,qtd:rec.qtd,volume:rec.volume,valor:rec.valor/rec.participantes.length,origem:'rat',srcId:rec.id,srcKind:cat});
+    out.push({data:rec.data,cat,desc:cat==='racao'?rec.tipo:rec.descricao,qtd:rec.qtd?rec.qtd/rec.participantes.length:rec.qtd,volume:rec.volume?rec.volume/rec.participantes.length:rec.volume,valor:rec.valor/rec.participantes.length,origem:'rat',srcId:rec.id,srcKind:cat});
 }
 const vendaDoAnimal=id=>DB.vendas.find(v=>v.animalId===id);
 const pesagensAnimal=id=>(DB.pesagens||[]).filter(p=>p.animalId===id).sort((a,b)=>(a.data||'').localeCompare(b.data||''));
