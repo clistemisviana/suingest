@@ -1,0 +1,13 @@
+<svg viewBox="0 0 380 195" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, 'Times New Roman', serif">
+  <g transform="translate(20,20)">
+    <circle cx="70" cy="75" r="52" fill="none" stroke="#12233F" stroke-width="3.4"/>
+    <path d="M108,45 C128,38 145,48 148,65 C151,80 142,90 132,93 L137,107 C138,110 135,112 132,110 L122,101 C110,106 97,102 90,92 C83,81 86,64 95,53 C99,48 103,46 108,45 Z" fill="#FFFFFF" stroke="#12233F" stroke-width="3.4" stroke-linejoin="round"/>
+    <path d="M100,48 L94,32 L112,44 Z" fill="#FFFFFF" stroke="#12233F" stroke-width="3.4" stroke-linejoin="round"/>
+    <circle cx="112" cy="68" r="3.6" fill="#12233F"/>
+  </g>
+  <text x="170" y="58" font-size="15" font-weight="600" letter-spacing="4.5" fill="#12233F">SUINOCULTURA</text>
+  <text x="168" y="102" font-size="38" font-weight="700" letter-spacing="0.5" fill="#12233F">SÃO JOSÉ</text>
+  <line x1="168" y1="140" x2="179" y2="140" stroke="#BF9159" stroke-width="1.6"/>
+  <text x="261" y="146" font-size="19" font-weight="700" letter-spacing="3.5" fill="#BF9159" text-anchor="middle">DESDE 2026</text>
+  <line x1="343" y1="140" x2="354" y2="140" stroke="#BF9159" stroke-width="1.6"/>
+</svg>
