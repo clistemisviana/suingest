@@ -615,6 +615,20 @@ function totaisGerais(){
   return {invest,racao,estr,compras,mo,recebida,prevista,lucro:(recebida+prevista)-invest,
     ativos:ativosMeus+ativosTerc,ativosMeus,ativosTerc,totalAnimais:meus.length,nTerceiros:terc.length};
 }
+/* ritmo de compra de ração (kg/dia e R$/dia), com base no intervalo entre o primeiro e o
+   último lançamento no período — inclui todos os animais (é sobre a compra, não sobre
+   custo/lucro). Passe `extra` ({data,valor,volume}) pra simular incluir um lançamento
+   ainda não salvo (usado no preview do formulário). */
+function racaoRitmo(extra){
+  const recs=DB.racoes.filter(r=>r.data&&noPeriodo(r.data));
+  if(extra&&extra.data&&extra.valor) recs.push(extra);
+  if(recs.length<2) return null;
+  const datas=recs.map(r=>r.data).sort();
+  const dias=idadeDias(datas[0],datas[datas.length-1]);
+  if(!dias) return null;
+  let kg=0,val=0; recs.forEach(r=>{kg+=r.volume||0;val+=r.valor||0;});
+  return {kgDia:kg/dias,valDia:val/dias,dias,n:recs.length};
+}
 
 /* ============ Filtro de período (ano/mês) ============ */
 let FILTERS={ dashboard:{anos:null,meses:'todos'}, lancamentos:{anos:null,meses:'todos'}, gestao:{anos:null,meses:'todos'} };
@@ -752,9 +766,14 @@ function painelDespesas(t){
       <div style="width:110px;text-align:right;flex:none;font-size:13.5px;font-weight:700;font-variant-numeric:tabular-nums">${fmtBRL(x.v)}</div>
       <div style="width:52px;text-align:right;flex:none;font-size:12px;color:var(--muted)">${fmtN(pct,1)}%</div>
     </div>`;}).join('');
+  const ritmo=racaoRitmo();
+  const ritmoHtml=ritmo?`<div class="calc-line" style="margin-top:12px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
+      <span style="flex:none">${ic('racao')}</span>
+      <span>Ritmo de compra de ração: <b>${fmtN(ritmo.kgDia,1)} kg/dia</b> · <b>${fmtBRL(ritmo.valDia)}/dia</b>
+        <span style="color:var(--muted);font-size:12px"> (${ritmo.n} lançamentos, ${ritmo.dias} dias)</span></span></div>`:'';
   return `<div class="panel" style="margin-top:16px">
     <div class="panel-head"><h2>${ic('investido')} Composição das despesas</h2><span class="hint">total ${fmtBRL(t.invest)} no período</span></div>
-    <div class="panel-body">${barras}</div></div>`;
+    <div class="panel-body">${barras}${ritmoHtml}</div></div>`;
 }
 function modalMaoDeObra(){
   const lanc=maoDeObraLancamentos().filter(m=>noPeriodo(m.data));
@@ -1580,21 +1599,36 @@ function segCusto(p,d){
 function previewRateio(p){
   const info=document.getElementById(p+'_rateioInfo');if(!info)return;
   const d=document.querySelector(`#${p}_seg button.on`).dataset.d;
-  let ativos;
-  if(d==='lote'){
-    const sel=[...document.querySelectorAll(`#${p}_loteBox input:checked`)].map(c=>c.value);
-    if(!sel.length){info.innerHTML='';return;}
-    ativos=sel.flatMap(animaisAtivosDoLote);
-  } else if(d==='geral'){
-    ativos=DB.animais.filter(a=>a.status==='ativo');
-  } else {info.innerHTML='';return;}
-  const valor=numVal(p+'_valor');
-  if(!ativos.length){info.innerHTML=`<div class="calc-line" style="background:var(--danger-l);color:#a83a24">${ic('x')} Nenhum animal ativo ${d==='lote'?'nos lotes selecionados':'na granja'}.</div>`;return;}
-  const cota=valor?valor/ativos.length:0;
-  const terc=ativos.filter(ehTerceiro), nT=terc.length;
-  let h=`<div class="calc-line">${ic('settings')} Rateio entre <b>${ativos.length}</b> ativos${nT?` (<b>${nT}</b> de terceiro)`:''}${valor?` → <b>${fmtBRL(cota)}</b> por animal`:''}</div>`;
-  if(nT&&valor&&p==='rc') h+=`<div class="calc-line" style="background:#FDF3E3;color:#8a5200;align-items:flex-start"><span style="flex:none">${ic('info')}</span><span><b>${fmtBRL(cota*nT)}</b> irão para <b>mão de obra</b> (ração de ${nT===1?'1 animal':nT+' animais'} de terceiro) e não entram no custo dos seus porcos.</span></div>`;
-  if(nT&&valor&&p==='es') h+=`<div class="calc-line" style="background:#FDF3E3;color:#8a5200;align-items:flex-start"><span style="flex:none">${ic('info')}</span><span>A parte dos animais de terceiro (<b>${fmtBRL(cota*nT)}</b>) é custo <b>do proprietário</b>, não seu.</span></div>`;
+  let h='';
+  if(d==='lote'||d==='geral'){
+    let ativos;
+    if(d==='lote'){
+      const sel=[...document.querySelectorAll(`#${p}_loteBox input:checked`)].map(c=>c.value);
+      ativos=sel.length?sel.flatMap(animaisAtivosDoLote):null;
+    } else {
+      ativos=DB.animais.filter(a=>a.status==='ativo');
+    }
+    const valor=numVal(p+'_valor');
+    if(ativos===null){ /* nenhum lote marcado ainda: sem caixa de rateio */ }
+    else if(!ativos.length){
+      h=`<div class="calc-line" style="background:var(--danger-l);color:#a83a24">${ic('x')} Nenhum animal ativo ${d==='lote'?'nos lotes selecionados':'na granja'}.</div>`;
+    } else {
+      const cota=valor?valor/ativos.length:0;
+      const terc=ativos.filter(ehTerceiro), nT=terc.length;
+      h=`<div class="calc-line">${ic('settings')} Rateio entre <b>${ativos.length}</b> ativos${nT?` (<b>${nT}</b> de terceiro)`:''}${valor?` → <b>${fmtBRL(cota)}</b> por animal`:''}</div>`;
+      if(nT&&valor&&p==='rc') h+=`<div class="calc-line" style="background:#FDF3E3;color:#8a5200;align-items:flex-start"><span style="flex:none">${ic('info')}</span><span><b>${fmtBRL(cota*nT)}</b> irão para <b>mão de obra</b> (ração de ${nT===1?'1 animal':nT+' animais'} de terceiro) e não entram no custo dos seus porcos.</span></div>`;
+      if(nT&&valor&&p==='es') h+=`<div class="calc-line" style="background:#FDF3E3;color:#8a5200;align-items:flex-start"><span style="flex:none">${ic('info')}</span><span>A parte dos animais de terceiro (<b>${fmtBRL(cota*nT)}</b>) é custo <b>do proprietário</b>, não seu.</span></div>`;
+    }
+  }
+  if(p==='rc'){
+    const valor_=numVal('rc_valor'), vol_=numVal('rc_vol'), data_=val('rc_data');
+    const extra=(valor_&&data_)?{data:data_,valor:valor_,volume:vol_||0}:null;
+    const rt=racaoRitmo(extra);
+    if(rt) h+=`<div class="calc-line" style="margin-top:8px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
+        <span style="flex:none">${ic('trend')}</span>
+        <span>Com este lançamento, o ritmo de compra de ração passa a <b>${fmtN(rt.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt.valDia)}/dia</b>
+          <span style="color:var(--muted);font-size:12px"> (${rt.n} lançamentos, ${rt.dias} dias)</span></span></div>`;
+  }
   info.innerHTML=h;
 }
 function collectCusto(p){
