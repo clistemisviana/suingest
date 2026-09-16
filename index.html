@@ -815,7 +815,7 @@ function chartRitmoRacao(pts){
       <text x="${p.x}" y="${dy}" font-size="11.5" font-weight="700" fill="${OR}" text-anchor="middle">${fmtBRL(p.v)}</text>
       <text x="${p.x}" y="${dy+13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${fmtN(p.kg,1)} kg/dia</text>`;}).join('');
   const xlab=pts.map((p,i)=>`<text x="${X(i)}" y="${H-27}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>
-      <text x="${X(i)}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${p.animais!=null?p.animais+' animal'+(p.animais===1?'':'is'):'—'}</text>`).join('');
+      <text x="${X(i)}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${p.animais!=null?p.animais+' '+(p.animais===1?'animal':'animais'):'—'}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">${line}${dots}${xlab}</svg>`;
 }
 function modalMaoDeObra(){
