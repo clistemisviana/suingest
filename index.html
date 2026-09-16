@@ -629,6 +629,29 @@ function racaoRitmo(extra){
   let kg=0,val=0; recs.forEach(r=>{kg+=r.volume||0;val+=r.valor||0;});
   return {kgDia:kg/dias,valDia:val/dias,dias,n:recs.length};
 }
+/* histórico ponto-a-ponto: pra cada lançamento (exceto o mais recente), o intervalo até o
+   PRÓXIMO lançamento diz quanto durou aquela compra — vira o kg/dia e R$/dia daquele lote.
+   Não respeita o filtro de período (é uma série histórica, não um total do período). */
+function racaoRitmoPorLancamento(extra){
+  const recs=DB.racoes.filter(r=>r.data).slice();
+  if(extra&&extra.data&&extra.valor) recs.push(extra);
+  recs.sort((a,b)=>a.data.localeCompare(b.data));
+  const pts=[];
+  for(let i=0;i<recs.length-1;i++){
+    const dias=idadeDias(recs[i].data,recs[i+1].data);
+    if(!dias) continue;
+    pts.push({data:recs[i].data,dias,kgDia:(recs[i].volume||0)/dias,valDia:(recs[i].valor||0)/dias});
+  }
+  return pts;
+}
+/* média ponderada (kg totais ÷ dias totais) dos últimos N intervalos já fechados */
+function racaoRitmoUltimosN(n,extra){
+  const pts=racaoRitmoPorLancamento(extra).slice(-n);
+  if(!pts.length) return null;
+  let dias=0,kg=0,val=0; pts.forEach(p=>{dias+=p.dias;kg+=p.kgDia*p.dias;val+=p.valDia*p.dias;});
+  if(!dias) return null;
+  return {kgDia:kg/dias,valDia:val/dias,dias,n:pts.length};
+}
 
 /* ============ Filtro de período (ano/mês) ============ */
 let FILTERS={ dashboard:{anos:null,meses:'todos'}, lancamentos:{anos:null,meses:'todos'}, gestao:{anos:null,meses:'todos'} };
@@ -771,9 +794,27 @@ function painelDespesas(t){
       <span style="flex:none">${ic('racao')}</span>
       <span>Ritmo de compra de ração: <b>${fmtN(ritmo.kgDia,1)} kg/dia</b> · <b>${fmtBRL(ritmo.valDia)}/dia</b>
         <span style="color:var(--muted);font-size:12px"> (${ritmo.n} lançamentos, ${ritmo.dias} dias)</span></span></div>`:'';
+  const histPts=racaoRitmoPorLancamento().slice(-10);
+  const histHtml=histPts.length?`<div class="mchart-title" style="margin-top:14px">${ic('trend')} Gasto médio por lançamento de ração (R$/dia, kg/dia entre parênteses)</div>${chartRitmoRacao(histPts)}`
+    :`<div class="calc-line" style="margin-top:12px;color:var(--muted)">${ic('info')} Faltam lançamentos de ração pra montar o histórico (precisa de pelo menos 2).</div>`;
   return `<div class="panel" style="margin-top:16px">
     <div class="panel-head"><h2>${ic('investido')} Composição das despesas</h2><span class="hint">total ${fmtBRL(t.invest)} no período</span></div>
-    <div class="panel-body">${barras}${ritmoHtml}</div></div>`;
+    <div class="panel-body">${barras}${ritmoHtml}${histHtml}</div></div>`;
+}
+/* gráfico de linha: R$/dia de cada lançamento de ração (rótulo traz o kg/dia junto) */
+function chartRitmoRacao(pts){
+  const OR='#E87B2A';
+  const W=1000,H=220,padL=64,padR=64,padT=40,padB=50,cw=W-padL-padR,ch=H-padT-padB,n=pts.length;
+  const max=Math.max(1,...pts.map(p=>p.valDia));
+  const X=i=>n===1?padL+cw/2:padL+cw*i/(n-1), Y=v=>padT+ch-(v/max)*ch;
+  const lp=pts.map((p,i)=>({x:X(i),y:Y(p.valDia),v:p.valDia,kg:p.kgDia}));
+  const line=`<path d="${smoothPath(lp)}" fill="none" stroke="${OR}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const dots=lp.map(p=>{const dy=(p.y-24<padT+6)?p.y+30:p.y-24;
+    return `<circle cx="${p.x}" cy="${p.y}" r="4.2" fill="#fff" stroke="${OR}" stroke-width="2.5"/>
+      <text x="${p.x}" y="${dy}" font-size="11.5" font-weight="700" fill="${OR}" text-anchor="middle">${fmtBRL(p.v)}</text>
+      <text x="${p.x}" y="${dy+13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${fmtN(p.kg,1)} kg/dia</text>`;}).join('');
+  const xlab=pts.map((p,i)=>`<text x="${X(i)}" y="${H-13}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">${line}${dots}${xlab}</svg>`;
 }
 function modalMaoDeObra(){
   const lanc=maoDeObraLancamentos().filter(m=>noPeriodo(m.data));
@@ -1628,6 +1669,11 @@ function previewRateio(p){
         <span style="flex:none">${ic('trend')}</span>
         <span>Com este lançamento, o ritmo de compra de ração passa a <b>${fmtN(rt.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt.valDia)}/dia</b>
           <span style="color:var(--muted);font-size:12px"> (${rt.n} lançamentos, ${rt.dias} dias)</span></span></div>`;
+    const rt3=racaoRitmoUltimosN(3,extra);
+    if(rt3) h+=`<div class="calc-line" style="margin-top:6px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
+        <span style="flex:none">${ic('racao')}</span>
+        <span>Média dos últimos ${rt3.n} lançamento${rt3.n===1?'':'s'}: <b>${fmtN(rt3.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt3.valDia)}/dia</b>
+          <span style="color:var(--muted);font-size:12px"> (${rt3.dias} dias)</span></span></div>`;
   }
   info.innerHTML=h;
 }
