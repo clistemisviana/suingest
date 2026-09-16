@@ -640,7 +640,8 @@ function racaoRitmoPorLancamento(extra){
   for(let i=0;i<recs.length-1;i++){
     const dias=idadeDias(recs[i].data,recs[i+1].data);
     if(!dias) continue;
-    pts.push({data:recs[i].data,dias,kgDia:(recs[i].volume||0)/dias,valDia:(recs[i].valor||0)/dias});
+    const animais=recs[i].destinoTipo==='animal'?1:(recs[i].participantes?recs[i].participantes.length:null);
+    pts.push({data:recs[i].data,dias,kgDia:(recs[i].volume||0)/dias,valDia:(recs[i].valor||0)/dias,animais});
   }
   return pts;
 }
@@ -804,7 +805,7 @@ function painelDespesas(t){
 /* gráfico de linha: R$/dia de cada lançamento de ração (rótulo traz o kg/dia junto) */
 function chartRitmoRacao(pts){
   const OR='#E87B2A';
-  const W=1000,H=220,padL=64,padR=64,padT=40,padB=50,cw=W-padL-padR,ch=H-padT-padB,n=pts.length;
+  const W=1000,H=234,padL=64,padR=64,padT=40,padB=64,cw=W-padL-padR,ch=H-padT-padB,n=pts.length;
   const max=Math.max(1,...pts.map(p=>p.valDia));
   const X=i=>n===1?padL+cw/2:padL+cw*i/(n-1), Y=v=>padT+ch-(v/max)*ch;
   const lp=pts.map((p,i)=>({x:X(i),y:Y(p.valDia),v:p.valDia,kg:p.kgDia}));
@@ -813,7 +814,8 @@ function chartRitmoRacao(pts){
     return `<circle cx="${p.x}" cy="${p.y}" r="4.2" fill="#fff" stroke="${OR}" stroke-width="2.5"/>
       <text x="${p.x}" y="${dy}" font-size="11.5" font-weight="700" fill="${OR}" text-anchor="middle">${fmtBRL(p.v)}</text>
       <text x="${p.x}" y="${dy+13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${fmtN(p.kg,1)} kg/dia</text>`;}).join('');
-  const xlab=pts.map((p,i)=>`<text x="${X(i)}" y="${H-13}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>`).join('');
+  const xlab=pts.map((p,i)=>`<text x="${X(i)}" y="${H-27}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>
+      <text x="${X(i)}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${p.animais!=null?p.animais+' animal'+(p.animais===1?'':'is'):'—'}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">${line}${dots}${xlab}</svg>`;
 }
 function modalMaoDeObra(){
