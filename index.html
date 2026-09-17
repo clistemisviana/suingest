@@ -629,29 +629,92 @@ function racaoRitmo(extra){
   let kg=0,val=0; recs.forEach(r=>{kg+=r.volume||0;val+=r.valor||0;});
   return {kgDia:kg/dias,valDia:val/dias,dias,n:recs.length};
 }
-/* histórico ponto-a-ponto: pra cada lançamento (exceto o mais recente), o intervalo até o
-   PRÓXIMO lançamento diz quanto durou aquela compra — vira o kg/dia e R$/dia daquele lote.
-   Não respeita o filtro de período (é uma série histórica, não um total do período). */
-function racaoRitmoPorLancamento(extra){
-  const recs=DB.racoes.filter(r=>r.data).slice();
-  if(extra&&extra.data&&extra.valor) recs.push(extra);
-  recs.sort((a,b)=>a.data.localeCompare(b.data));
-  const pts=[];
-  for(let i=0;i<recs.length-1;i++){
-    const dias=idadeDias(recs[i].data,recs[i+1].data);
-    if(!dias) continue;
-    const animais=recs[i].destinoTipo==='animal'?1:(recs[i].participantes?recs[i].participantes.length:null);
-    pts.push({data:recs[i].data,dias,kgDia:(recs[i].volume||0)/dias,valDia:(recs[i].valor||0)/dias,animais});
-  }
-  return pts;
+/* chave estável do "grupo de consumo" de um lançamento de ração — usada pra saber se dois
+   lançamentos pertencem à mesma linha do histórico. 'geral' é sempre uma chave só (o tronco);
+   lote(s) e animal viram uma chave por combinação, sem contar quantos ativos tem agora
+   (isso mudaria a chave com o tempo e quebraria o agrupamento). */
+function racaoGrupoKey(r){
+  if(r.destinoTipo==='geral') return 'geral';
+  if(r.destinoTipo==='animal') return 'animal:'+r.alvo;
+  const ls=(Array.isArray(r.alvo)?r.alvo:[r.alvo]).filter(Boolean).slice().sort();
+  return 'lote:'+ls.join('+');
 }
-/* média ponderada (kg totais ÷ dias totais) dos últimos N intervalos já fechados */
-function racaoRitmoUltimosN(n,extra){
-  const pts=racaoRitmoPorLancamento(extra).slice(-n);
-  if(!pts.length) return null;
-  let dias=0,kg=0,val=0; pts.forEach(p=>{dias+=p.dias;kg+=p.kgDia*p.dias;val+=p.valDia*p.dias;});
+/* histórico com bifurcação/reencontro: enquanto os lançamentos forem 'geral', é um tronco só.
+   No dia em que aparece lançamento por lote/animal específico, cada grupo vira uma linha própria
+   (ligada ao tronco por um conector visual, sem taxa — não dava pra saber a taxa de cada lote
+   enquanto a compra ainda era conjunta). Se um lançamento 'geral' aparecer de novo depois, todas
+   as linhas abertas se fecham nesse ponto (reencontro), e o tronco volta a ser o único ramo.
+   Não respeita filtro de período (é histórico, não total do período). */
+function racaoHistoricoGrafico(){
+  const porData={};
+  DB.racoes.filter(r=>r.data).forEach(r=>{
+    const key=racaoGrupoKey(r);
+    const dia=porData[r.data]=porData[r.data]||{};
+    const g=dia[key]=dia[key]||{valor:0,volume:0,animaisSet:new Set(),label:alvoLabelSemContagem(r)};
+    g.valor+=r.valor||0; g.volume+=r.volume||0;
+    if(r.destinoTipo==='animal'){ if(r.alvo) g.animaisSet.add(r.alvo); }
+    else if(r.participantes) r.participantes.forEach(id=>g.animaisSet.add(id));
+  });
+  const datas=Object.keys(porData).sort();
+  const segmentos=[]; const abertos={}; let trunkUltimo=null;
+  datas.forEach(data=>{
+    const grupos=porData[data];
+    if(grupos['geral']){
+      const g=grupos['geral'];
+      const novo={data,valor:g.valor,volume:g.volume,animais:g.animaisSet.size||null,key:'geral',label:g.label};
+      Object.keys(abertos).forEach(key=>{ segmentos.push({de:abertos[key],para:novo,tipo:'conector'}); delete abertos[key]; });
+      if(trunkUltimo){ const dSpan=idadeDias(trunkUltimo.data,novo.data);
+        if(dSpan) segmentos.push({de:trunkUltimo,para:novo,tipo:'real',dias:dSpan,kgDia:trunkUltimo.volume/dSpan,valDia:trunkUltimo.valor/dSpan}); }
+      trunkUltimo=novo;
+    }
+    Object.keys(grupos).forEach(key=>{
+      if(key==='geral') return;
+      const g=grupos[key];
+      const novo={data,valor:g.valor,volume:g.volume,animais:g.animaisSet.size||null,key,label:g.label};
+      if(abertos[key]){ const dSpan=idadeDias(abertos[key].data,novo.data);
+        if(dSpan) segmentos.push({de:abertos[key],para:novo,tipo:'real',dias:dSpan,kgDia:abertos[key].volume/dSpan,valDia:abertos[key].valor/dSpan});
+      } else if(trunkUltimo){ segmentos.push({de:trunkUltimo,para:novo,tipo:'conector'}); }
+      abertos[key]=novo;
+    });
+  });
+  const pendentes=Object.keys(abertos).length?Object.values(abertos):(trunkUltimo?[trunkUltimo]:[]);
+  return {segmentos,pendentes};
+}
+function alvoLabelSemContagem(r){
+  if(r.destinoTipo==='animal'){const a=animalByCod(r.alvo);return a?brincoLabel(a):'Animal';}
+  if(r.destinoTipo==='geral') return 'Geral';
+  const ls=(Array.isArray(r.alvo)?r.alvo:[r.alvo]).filter(Boolean);
+  return (ls.length>1?'Lotes ':'Lote ')+ls.join(', ');
+}
+/* ritmo (ponta a ponta) e média dos últimos N, mas só dentro do MESMO grupo de consumo —
+   não mistura Geral com lote específico, nem um lote com outro. */
+function racaoListaGrupo(grupoKey,extra){
+  const recs=DB.racoes.filter(r=>r.data&&racaoGrupoKey(r)===grupoKey);
+  if(extra&&extra.data&&extra.valor) recs.push(extra);
+  const porData={};
+  recs.forEach(r=>{ const g=porData[r.data]=porData[r.data]||{data:r.data,valor:0,volume:0}; g.valor+=r.valor||0; g.volume+=r.volume||0; });
+  return Object.values(porData).sort((a,b)=>a.data.localeCompare(b.data));
+}
+function racaoRitmoGrupo(grupoKey,extra){
+  const lista=racaoListaGrupo(grupoKey,extra);
+  if(lista.length<2) return null;
+  const dias=idadeDias(lista[0].data,lista[lista.length-1].data);
   if(!dias) return null;
-  return {kgDia:kg/dias,valDia:val/dias,dias,n:pts.length};
+  let kg=0,val=0; lista.forEach(d=>{kg+=d.volume;val+=d.valor;});
+  return {kgDia:kg/dias,valDia:val/dias,dias,n:lista.length};
+}
+function racaoRitmoUltimosNGrupo(grupoKey,n,extra){
+  const lista=racaoListaGrupo(grupoKey,extra);
+  const pts=[];
+  for(let i=0;i<lista.length-1;i++){
+    const dSpan=idadeDias(lista[i].data,lista[i+1].data);
+    if(dSpan) pts.push({dias:dSpan,kgDia:lista[i].volume/dSpan,valDia:lista[i].valor/dSpan});
+  }
+  const ult=pts.slice(-n);
+  if(!ult.length) return null;
+  let dias=0,kg=0,val=0; ult.forEach(p=>{dias+=p.dias;kg+=p.kgDia*p.dias;val+=p.valDia*p.dias;});
+  if(!dias) return null;
+  return {kgDia:kg/dias,valDia:val/dias,dias,n:ult.length};
 }
 
 /* ============ Filtro de período (ano/mês) ============ */
@@ -795,28 +858,73 @@ function painelDespesas(t){
       <span style="flex:none">${ic('racao')}</span>
       <span>Ritmo de compra de ração: <b>${fmtN(ritmo.kgDia,1)} kg/dia</b> · <b>${fmtBRL(ritmo.valDia)}/dia</b>
         <span style="color:var(--muted);font-size:12px"> (${ritmo.n} lançamentos, ${ritmo.dias} dias)</span></span></div>`:'';
-  const histPts=racaoRitmoPorLancamento().slice(-10);
-  const histHtml=histPts.length?`<div class="mchart-title" style="margin-top:14px">${ic('trend')} Gasto médio por lançamento de ração (R$/dia, kg/dia entre parênteses)</div>${chartRitmoRacao(histPts)}`
-    :`<div class="calc-line" style="margin-top:12px;color:var(--muted)">${ic('info')} Faltam lançamentos de ração pra montar o histórico (precisa de pelo menos 2).</div>`;
+  const hist=racaoHistoricoGrafico();
+  const histHtml=(hist.segmentos.length||hist.pendentes.length)
+    ?`<div class="mchart-title" style="margin-top:14px">${ic('trend')} Gasto médio por lançamento de ração — por lote/geral (R$/dia, kg/dia entre parênteses)</div>${chartRitmoRacao(hist)}`
+    :`<div class="calc-line" style="margin-top:12px;color:var(--muted)">${ic('info')} Ainda não há lançamentos de ração.</div>`;
   return `<div class="panel" style="margin-top:16px">
     <div class="panel-head"><h2>${ic('investido')} Composição das despesas</h2><span class="hint">total ${fmtBRL(t.invest)} no período</span></div>
     <div class="panel-body">${barras}${ritmoHtml}${histHtml}</div></div>`;
 }
-/* gráfico de linha: R$/dia de cada lançamento de ração (rótulo traz o kg/dia junto) */
-function chartRitmoRacao(pts){
-  const OR='#E87B2A';
-  const W=1000,H=234,padL=64,padR=64,padT=40,padB=64,cw=W-padL-padR,ch=H-padT-padB,n=pts.length;
-  const max=Math.max(1,...pts.map(p=>p.valDia));
-  const X=i=>n===1?padL+cw/2:padL+cw*i/(n-1), Y=v=>padT+ch-(v/max)*ch;
-  const lp=pts.map((p,i)=>({x:X(i),y:Y(p.valDia),v:p.valDia,kg:p.kgDia}));
-  const line=`<path d="${smoothPath(lp)}" fill="none" stroke="${OR}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`;
-  const dots=lp.map(p=>{const dy=(p.y-24<padT+6)?p.y+30:p.y-24;
-    return `<circle cx="${p.x}" cy="${p.y}" r="4.2" fill="#fff" stroke="${OR}" stroke-width="2.5"/>
-      <text x="${p.x}" y="${dy}" font-size="11.5" font-weight="700" fill="${OR}" text-anchor="middle">${fmtBRL(p.v)}</text>
-      <text x="${p.x}" y="${dy+13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${fmtN(p.kg,1)} kg/dia</text>`;}).join('');
-  const xlab=pts.map((p,i)=>`<text x="${X(i)}" y="${H-27}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>
-      <text x="${X(i)}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${p.animais!=null?p.animais+' '+(p.animais===1?'animal':'animais'):'—'}</text>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">${line}${dots}${xlab}</svg>`;
+/* gráfico de linha com bifurcação/reencontro: enquanto os lançamentos forem 'geral' é um tronco
+   só; quando aparece lançamento por lote/animal específico, cada grupo vira uma linha própria
+   (ligada ao tronco por um traço sem taxa); se 'geral' aparecer de novo, as linhas se reencontram. */
+function chartRitmoRacao(hist){
+  const {segmentos,pendentes}=hist;
+  if(!segmentos.length&&!pendentes.length) return '';
+  const datasSet=new Set();
+  segmentos.forEach(s=>{datasSet.add(s.de.data);datasSet.add(s.para.data);});
+  pendentes.forEach(p=>datasSet.add(p.data));
+  const datas=[...datasSet].sort(), n=datas.length;
+  const W=1000,H=252,padL=70,padR=70,padT=44,padB=68,cw=W-padL-padR,ch=H-padT-padB;
+  const X=data=>n===1?padL+cw/2:padL+cw*datas.indexOf(data)/(n-1);
+  const maxV=Math.max(1,...segmentos.filter(s=>s.tipo==='real').map(s=>s.valDia));
+  const Yv=v=>padT+ch-(v/maxV)*ch, meio=padT+ch/2;
+  const kOf=p=>p.data+'|'+p.key;
+  const yMap={};
+  segmentos.forEach(s=>{ if(yMap[kOf(s.de)]==null) yMap[kOf(s.de)]=meio;
+    yMap[kOf(s.para)]=s.tipo==='real'?Yv(s.valDia):yMap[kOf(s.de)]; });
+  pendentes.forEach(p=>{ if(yMap[kOf(p)]==null) yMap[kOf(p)]=meio; });
+  const PAL=['#E87B2A','#1E7D34','#0B3A5E','#B26A00','#7A4FB5','#C0392B','#0E7C86'];
+  const cores={}; let idx=0;
+  const corDe=key=>{ if(key==='geral') return '#8C97A0'; if(!cores[key]){cores[key]=PAL[idx%PAL.length];idx++;} return cores[key]; };
+  const linhas=segmentos.map(s=>{
+    const x1=X(s.de.data),y1=yMap[kOf(s.de)],x2=X(s.para.data),y2=yMap[kOf(s.para)];
+    const cor=s.tipo==='real'?corDe(s.de.key):corDe(s.de.key==='geral'?s.para.key:s.de.key);
+    const dash=s.tipo==='conector'?' stroke-dasharray="5 5" opacity=".7"':'';
+    return `<path d="M${x1},${y1} C${(x1+x2)/2},${y1} ${(x1+x2)/2},${y2} ${x2},${y2}" fill="none" stroke="${cor}" stroke-width="${s.tipo==='real'?3.5:2.4}" stroke-linecap="round"${dash}/>`;
+  }).join('');
+  const pontos={}, labelPorKey={};
+  const addBase=pt=>{ const k=kOf(pt); pontos[k]=pontos[k]||{x:X(pt.data),y:yMap[k],data:pt.data,key:pt.key,animais:pt.animais}; labelPorKey[pt.key]=pt.label; return pontos[k]; };
+  segmentos.forEach(s=>{ addBase(s.de); addBase(s.para); if(s.tipo==='real'){ const pd=addBase(s.de); pd.valDia=s.valDia; pd.kgDia=s.kgDia; } });
+  pendentes.forEach(p=>{ const pd=addBase(p); pd.pendente=true; pd.valorTotal=p.valor; });
+  const animaisTxt=a=>a!=null?a+' '+(a===1?'animal':'animais'):'—';
+  const marcas=Object.values(pontos).map(p=>{
+    const cor=corDe(p.key);
+    if(p.valDia!=null){
+      const dy=(p.y-24<padT+6)?p.y+30:p.y-24;
+      return `<circle cx="${p.x}" cy="${p.y}" r="4.2" fill="#fff" stroke="${cor}" stroke-width="2.5"/>
+        <text x="${p.x}" y="${dy}" font-size="11.5" font-weight="700" fill="${cor}" text-anchor="middle">${fmtBRL(p.valDia)}</text>
+        <text x="${p.x}" y="${dy+13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${fmtN(p.kgDia,1)} kg/dia</text>
+        <text x="${p.x}" y="${H-27}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>
+        <text x="${p.x}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${animaisTxt(p.animais)}</text>`;
+    }
+    if(p.pendente){
+      const dy=(p.y-24<padT+6)?p.y+30:p.y-24;
+      return `<circle cx="${p.x}" cy="${p.y}" r="5" fill="none" stroke="${cor}" stroke-width="2.5" stroke-dasharray="2 2"/>
+        <text x="${p.x}" y="${dy}" font-size="11.5" font-weight="700" fill="${cor}" text-anchor="middle">${fmtBRL(p.valorTotal)}</text>
+        <text x="${p.x}" y="${dy+13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">aguardando</text>
+        <text x="${p.x}" y="${H-27}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>
+        <text x="${p.x}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${animaisTxt(p.animais)}</text>`;
+    }
+    return `<circle cx="${p.x}" cy="${p.y}" r="5.5" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/>
+      <text x="${p.x}" y="${H-27}" font-size="11" fill="var(--muted)" text-anchor="middle">${fmtData(p.data)}</text>
+      <text x="${p.x}" y="${H-13}" font-size="10.5" fill="var(--muted)" text-anchor="middle">${animaisTxt(p.animais)}</text>`;
+  }).join('');
+  const legenda=Object.keys(labelPorKey).map(k=>`<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px">
+      <i style="width:13px;height:3px;border-radius:2px;background:${corDe(k)};display:inline-block"></i>${escapeHtml(labelPorKey[k])}</span>`).join('');
+  return `<div style="font-size:12px;margin-bottom:6px;display:flex;flex-wrap:wrap">${legenda}</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">${linhas}${marcas}</svg>`;
 }
 function modalMaoDeObra(){
   const lanc=maoDeObraLancamentos().filter(m=>noPeriodo(m.data));
@@ -1665,17 +1773,24 @@ function previewRateio(p){
   }
   if(p==='rc'){
     const valor_=numVal('rc_valor'), vol_=numVal('rc_vol'), data_=val('rc_data');
-    const extra=(valor_&&data_)?{data:data_,valor:valor_,volume:vol_||0}:null;
-    const rt=racaoRitmo(extra);
-    if(rt) h+=`<div class="calc-line" style="margin-top:8px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
-        <span style="flex:none">${ic('trend')}</span>
-        <span>Com este lançamento, o ritmo de compra de ração passa a <b>${fmtN(rt.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt.valDia)}/dia</b>
-          <span style="color:var(--muted);font-size:12px"> (${rt.n} lançamentos, ${rt.dias} dias)</span></span></div>`;
-    const rt3=racaoRitmoUltimosN(3,extra);
-    if(rt3) h+=`<div class="calc-line" style="margin-top:6px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
-        <span style="flex:none">${ic('racao')}</span>
-        <span>Média dos últimos ${rt3.n} lançamento${rt3.n===1?'':'s'}: <b>${fmtN(rt3.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt3.valDia)}/dia</b>
-          <span style="color:var(--muted);font-size:12px"> (${rt3.dias} dias)</span></span></div>`;
+    let grupoKey=null, grupoLabel='';
+    if(d==='geral'){ grupoKey='geral'; grupoLabel='Geral'; }
+    else if(d==='animal'){ const alvoId=val('rc_animal'); if(alvoId){ grupoKey='animal:'+alvoId; const a=animalByCod(alvoId); grupoLabel=a?brincoLabel(a):''; } }
+    else if(d==='lote'){ const sel=[...document.querySelectorAll(`#${p}_loteBox input:checked`)].map(c=>c.value).sort();
+      if(sel.length){ grupoKey='lote:'+sel.join('+'); grupoLabel=(sel.length>1?'Lotes ':'Lote ')+sel.join(', '); } }
+    if(grupoKey){
+      const extra=(valor_&&data_)?{data:data_,valor:valor_,volume:vol_||0}:null;
+      const rt=racaoRitmoGrupo(grupoKey,extra);
+      if(rt) h+=`<div class="calc-line" style="margin-top:8px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
+          <span style="flex:none">${ic('trend')}</span>
+          <span>Com este lançamento, o ritmo de <b>${escapeHtml(grupoLabel)}</b> passa a <b>${fmtN(rt.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt.valDia)}/dia</b>
+            <span style="color:var(--muted);font-size:12px"> (${rt.n} lançamentos, ${rt.dias} dias)</span></span></div>`;
+      const rt3=racaoRitmoUltimosNGrupo(grupoKey,3,extra);
+      if(rt3) h+=`<div class="calc-line" style="margin-top:6px;background:var(--surface-2);color:var(--ink);align-items:flex-start">
+          <span style="flex:none">${ic('racao')}</span>
+          <span>Média dos últimos ${rt3.n} lançamento${rt3.n===1?'':'s'} de <b>${escapeHtml(grupoLabel)}</b>: <b>${fmtN(rt3.kgDia,1)} kg/dia</b> · <b>${fmtBRL(rt3.valDia)}/dia</b>
+            <span style="color:var(--muted);font-size:12px"> (${rt3.dias} dias)</span></span></div>`;
+    }
   }
   info.innerHTML=h;
 }
