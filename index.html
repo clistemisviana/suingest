@@ -759,7 +759,7 @@ function setMesTodos(){ curFilter().meses='todos'; render(); }
 function toggleMes(m){ const F=curFilter(); if(F.meses==='todos')F.meses=new Set(); if(F.meses.has(m))F.meses.delete(m); else F.meses.add(m); if(!F.meses.size)F.meses='todos'; render(); }
 
 /* ============ Navegação ============ */
-const NAVITEMS=[['dashboard','Dashboard','dashboard'],['lancamentos','Lançamentos','lancamento'],['gestao','Gestão','gestao'],['resultados','Resultados','investido']];
+const NAVITEMS=[['dashboard','Dashboard','dashboard'],['lancamentos','Lançamentos','lancamento'],['gestao','Gestão','gestao'],['resultados','Resultados','trend']];
 document.getElementById('topnav').innerHTML=NAVITEMS.map(([p,l,i])=>`<button data-page="${p}" onclick="go('${p}')">${ic(i)}${l}</button>`).join('');
 document.getElementById('mobnav').innerHTML=NAVITEMS.map(([p,l,i])=>`<button data-page="${p}" onclick="go('${p}')">${ic(i)}${l}</button>`).join('');
 document.getElementById('btnCfg').innerHTML=ic('settings');
@@ -1550,7 +1550,7 @@ function resultadosTabela(linhas){
 function viewResultados(){
   const animais=animaisPeriodo();
   const head=`<div class="page-head"><div><div class="eyebrow">Rentabilidade</div><h1>Resultados</h1><p>Lucro e margem por porco, com o consolidado do período. Margem = lucro ÷ investimento; rentabilidade ao mês = margem ÷ meses investidos (compra até a venda/baixa).</p></div><button class="btn ghost" onclick="pdfResultadosAsk()">${ic('download')} Salvar PDF</button></div>`;
-  if(!animais.length) return `${head}${filtroBar()}<div class="panel"><div class="empty">${ic('investido','ei')}${DB.animais.length?'Nenhum animal no período selecionado.':'Sem animais para mostrar.<br>Cadastre seu plantel primeiro.'}</div></div>`;
+  if(!animais.length) return `${head}${filtroBar()}<div class="panel"><div class="empty">${ic('trend','ei')}${DB.animais.length?'Nenhum animal no período selecionado.':'Sem animais para mostrar.<br>Cadastre seu plantel primeiro.'}</div></div>`;
   return `${head}${filtroBar()}<div class="panel"><div class="table-scroll">${resultadosTabela(animais.map(linhaResultado))}</div></div>`;
 }
 function pdfResultadosAsk(){
