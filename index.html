@@ -194,6 +194,9 @@
     #printArea .filtro{display:none!important}
     @page{margin:12mm}
   }
+  .res-table{min-width:1100px} .res-table tfoot td{border-top:1px solid var(--line);font-weight:700;background:var(--surface-2)}
+  .res-table .res-div td{background:var(--surface-2);color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.03em}
+  @media print{#printArea .res-table{min-width:0;font-size:10px} #printArea .res-table th,#printArea .res-table td{padding:5px 6px}}
   .pdf-sel{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13.5px;cursor:pointer}
   .pdf-sel:hover{background:var(--surface-2)}
   .pdf-sel input{width:16px;height:16px;accent-color:var(--primary)}
@@ -718,7 +721,7 @@ function racaoRitmoUltimosNGrupo(grupoKey,n,extra){
 }
 
 /* ============ Filtro de período (ano/mês) ============ */
-let FILTERS={ dashboard:{anos:null,meses:'todos'}, lancamentos:{anos:null,meses:'todos'}, gestao:{anos:null,meses:'todos'} };
+let FILTERS={ dashboard:{anos:null,meses:'todos'}, lancamentos:{anos:null,meses:'todos'}, gestao:{anos:null,meses:'todos'}, resultados:{anos:null,meses:'todos'} };
 const curFilter=()=>FILTERS[PAGE]||FILTERS.dashboard;
 const MESNOME=['','jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 const lancadoEm=a=>a.dataChegada||a.dataCompra||a.dataNascimento||'';
@@ -756,7 +759,7 @@ function setMesTodos(){ curFilter().meses='todos'; render(); }
 function toggleMes(m){ const F=curFilter(); if(F.meses==='todos')F.meses=new Set(); if(F.meses.has(m))F.meses.delete(m); else F.meses.add(m); if(!F.meses.size)F.meses='todos'; render(); }
 
 /* ============ Navegação ============ */
-const NAVITEMS=[['dashboard','Dashboard','dashboard'],['lancamentos','Lançamentos','lancamento'],['gestao','Gestão','gestao']];
+const NAVITEMS=[['dashboard','Dashboard','dashboard'],['lancamentos','Lançamentos','lancamento'],['gestao','Gestão','gestao'],['resultados','Resultados','investido']];
 document.getElementById('topnav').innerHTML=NAVITEMS.map(([p,l,i])=>`<button data-page="${p}" onclick="go('${p}')">${ic(i)}${l}</button>`).join('');
 document.getElementById('mobnav').innerHTML=NAVITEMS.map(([p,l,i])=>`<button data-page="${p}" onclick="go('${p}')">${ic(i)}${l}</button>`).join('');
 document.getElementById('btnCfg').innerHTML=ic('settings');
@@ -787,7 +790,7 @@ function go(p){ PAGE=p; document.querySelectorAll('[data-page]').forEach(b=>b.cl
 function render(){
   initFilter();
   const app=document.getElementById('app');
-  app.innerHTML = PAGE==='dashboard'?viewDashboard() : PAGE==='lancamentos'?viewLancamentos() : viewGestao();
+  app.innerHTML = PAGE==='dashboard'?viewDashboard() : PAGE==='lancamentos'?viewLancamentos() : PAGE==='resultados'?viewResultados() : viewGestao();
 }
 
 /* ============ DASHBOARD ============ */
@@ -1474,6 +1477,103 @@ function tabelaAnimais(){
 }
 
 /* ============ GESTÃO ============ */
+/* ============ RESULTADOS (lucro e margem por porco) ============ */
+/* margem = lucro ÷ investimento (custo total) — não ÷ venda. Encerrados (vendido/baixa/descartado)
+   entram no resultado; ativos só mostram custo acumulado; terceiros: só a minha mão de obra, sem retorno. */
+function linhaResultado(a){
+  const dias=diasNaGranja(a);
+  const inicio=ehTerceiro(a)?(a.dataChegada||a.dataCompra):(a.dataCompra||a.dataChegada);
+  const meses=inicio?idadeDias(inicio,a.dataEncerramento)/30:null;
+  if(ehTerceiro(a)){
+    const custo=meuCustoComTerceiro(a.id);
+    return {a,terc:true,compra:null,racao:custo,estr:null,custo,venda:null,lucro:custo?-custo:0,margem:null,meses,rentMes:null,dias,lucroDia:null,lucroArr:null};
+  }
+  const d=despesasDoAnimal(a.id), soma=cat=>d.filter(x=>x.cat===cat).reduce((s,x)=>s+x.valor,0);
+  const compra=soma('compra'), racao=soma('racao'), estr=soma('estrutura'), custo=compra+racao+estr;
+  const v=vendaDoAnimal(a.id), encerrado=a.status!=='ativo';
+  const venda=encerrado?(v?v.valorVenda:0):null;
+  const lucro=encerrado?venda-custo:null;
+  const margem=(encerrado&&custo>0)?lucro/custo*100:null;
+  const lucroDia=(encerrado&&dias)?lucro/dias:null;
+  const arrob=(v&&v.pesoFinalKg)?arr(v.pesoFinalKg):0;
+  const lucroArr=(encerrado&&arrob)?lucro/arrob:null;
+  const rentMes=(margem!=null&&meses>0)?margem/meses:null;
+  return {a,terc:false,compra,racao,estr,custo,venda,lucro,margem,meses,rentMes,dias,lucroDia,lucroArr};
+}
+function consolidadoResultados(linhas){
+  const soma=(arrL,k)=>arrL.reduce((s,l)=>s+(l[k]||0),0);
+  const enc=linhas.filter(l=>!l.terc&&l.venda!=null), terc=linhas.filter(l=>l.terc), ativ=linhas.filter(l=>!l.terc&&l.venda==null);
+  const c={nEnc:enc.length,nTerc:terc.length,nAtiv:ativ.length,
+    compra:soma(enc,'compra'),racao:soma(enc,'racao'),estr:soma(enc,'estr'),custoEnc:soma(enc,'custo'),venda:soma(enc,'venda'),lucroEnc:soma(enc,'lucro'),
+    custoTerc:soma(terc,'custo'),custoAtiv:soma(ativ,'custo')};
+  c.margemEnc=c.custoEnc>0?c.lucroEnc/c.custoEnc*100:null;
+  c.custoBase=c.custoEnc+c.custoTerc; c.lucroLiq=c.lucroEnc-c.custoTerc;
+  c.margemLiq=c.custoBase>0?c.lucroLiq/c.custoBase*100:null;
+  /* capital-mês = custo × meses; rentabilidade ao mês = lucro ÷ capital-mês (bate com margem ÷ meses por animal) */
+  const cm=arrL=>arrL.reduce((s,l)=>s+(l.custo||0)*(l.meses||0),0), cmEnc=cm(enc), cmTerc=cm(terc);
+  c.mesesEnc=c.custoEnc>0?cmEnc/c.custoEnc:null; c.rentEnc=cmEnc>0?c.lucroEnc/cmEnc*100:null;
+  c.mesesBase=c.custoBase>0?(cmEnc+cmTerc)/c.custoBase:null; c.rentLiq=(cmEnc+cmTerc)>0?c.lucroLiq/(cmEnc+cmTerc)*100:null;
+  return c;
+}
+function descFiltro(){
+  const F=curFilter(); if(!F.anos||!F.anos.size) return 'todos os períodos';
+  return [...F.anos].sort().join(', ')+' · '+(F.meses==='todos'?'todos os meses':[...F.meses].sort().map(m=>MESNOME[+m]).join(', '));
+}
+function resultadosTabela(linhas){
+  const cel=v=>v==null?'—':fmtBRL(v), pct=v=>v==null?'—':fmtN(v,1)+'%', pct2=v=>v==null?'—':fmtN(v,2)+'%', mes=v=>v==null?'—':fmtN(v,1), sg=v=>v==null?'':(v>=0?'pos':'neg');
+  const ord=(x,y)=>brincoLabel(x.a).localeCompare(brincoLabel(y.a));
+  const meus=linhas.filter(l=>!l.terc).sort(ord), terc=linhas.filter(l=>l.terc).sort(ord), NC=13;
+  const linhaHtml=l=>{ const a=l.a, cls=sg(l.lucro);
+    return `<tr><td><b>${brincoLabel(a)}</b> ${badge(a.status)} ${sexoBadge(a.sexo)}${a.lote?` <span class="tag">${escapeHtml(a.lote)}</span>`:''}${l.terc&&a.donoNome?` <span class="tag">${escapeHtml(a.donoNome)}</span>`:''}</td>
+      <td>${escapeHtml(racaNome(a.racaId))}</td>
+      <td class="num money">${cel(l.compra)}</td><td class="num money">${cel(l.racao)}</td><td class="num money">${cel(l.estr)}</td>
+      <td class="num money neg">${fmtBRL(l.custo)}</td>
+      <td class="num money ${l.venda?'pos':''}">${cel(l.venda)}</td>
+      <td class="num money ${cls}">${cel(l.lucro)}</td>
+      <td class="num money ${cls}">${pct(l.margem)}</td>
+      <td class="num">${mes(l.meses)}</td>
+      <td class="num money ${sg(l.rentMes)}">${pct2(l.rentMes)}</td>
+      <td class="num money ${cls}">${cel(l.lucroDia)}</td>
+      <td class="num money ${cls}">${cel(l.lucroArr)}</td></tr>`; };
+  const c=consolidadoResultados(linhas);
+  const foot=(rot,cols,cls='')=>`<tr><td colspan="2">${rot}</td>${cols.map(v=>`<td class="num money ${cls}">${v}</td>`).join('')}<td colspan="2"></td></tr>`;
+  let tf='';
+  if(c.nEnc) tf+=foot(`Meus — vendidos/encerrados (${c.nEnc})`,[cel(c.compra),cel(c.racao),cel(c.estr),cel(c.custoEnc),cel(c.venda),cel(c.lucroEnc),pct(c.margemEnc),mes(c.mesesEnc),pct2(c.rentEnc)]);
+  if(c.nTerc) tf+=foot(`Terceiros — minha mão de obra, sem retorno (${c.nTerc})`,['—',cel(c.custoTerc),'—',cel(c.custoTerc),'—',cel(c.custoTerc?-c.custoTerc:0),'—','—','—']);
+  tf+=foot('Resultado consolidado',['—','—','—',cel(c.custoBase),cel(c.venda),cel(c.lucroLiq),pct(c.margemLiq),mes(c.mesesBase),pct2(c.rentLiq)]);
+  if(c.nAtiv) tf+=foot(`Em criação (${c.nAtiv}) — custo acumulado, fora do resultado`,['—','—','—',cel(c.custoAtiv),'—','—','—','—','—']);
+  return `<table class="res-table"><thead><tr>
+    <th>Animal (brinco)</th><th>Raça</th><th class="num">Compra</th><th class="num">Ração</th><th class="num">Sanidade / estrutura</th><th class="num">Custo total</th><th class="num">Venda</th><th class="num">Lucro</th><th class="num">Margem (% s/ investimento)</th><th class="num">Meses investido</th><th class="num">Rentab. % ao mês</th><th class="num">Lucro/dia</th><th class="num">Lucro/@</th>
+  </tr></thead><tbody>${meus.map(linhaHtml).join('')}${terc.length?`<tr class="res-div"><td colspan="${NC}">ANIMAIS DE TERCEIRO — a ração é minha mão de obra (custo sem retorno)</td></tr>${terc.map(linhaHtml).join('')}`:''}</tbody>
+  <tfoot>${tf}</tfoot></table>`;
+}
+function viewResultados(){
+  const animais=animaisPeriodo();
+  const head=`<div class="page-head"><div><div class="eyebrow">Rentabilidade</div><h1>Resultados</h1><p>Lucro e margem por porco, com o consolidado do período. Margem = lucro ÷ investimento; rentabilidade ao mês = margem ÷ meses investidos (compra até a venda/baixa).</p></div><button class="btn ghost" onclick="pdfResultadosAsk()">${ic('download')} Salvar PDF</button></div>`;
+  if(!animais.length) return `${head}${filtroBar()}<div class="panel"><div class="empty">${ic('investido','ei')}${DB.animais.length?'Nenhum animal no período selecionado.':'Sem animais para mostrar.<br>Cadastre seu plantel primeiro.'}</div></div>`;
+  return `${head}${filtroBar()}<div class="panel"><div class="table-scroll">${resultadosTabela(animais.map(linhaResultado))}</div></div>`;
+}
+function pdfResultadosAsk(){
+  const animais=animaisPeriodo().slice().sort((a,b)=>brincoLabel(a).localeCompare(brincoLabel(b)));
+  if(!animais.length) return toast('Sem animais no período para exportar','err');
+  openModalForm(mHead('investido','emerald','Salvar PDF de Resultados')+`
+   <div class="modal-body">
+     <p style="font-size:13.5px;color:var(--muted)">Período do filtro: <b>${descFiltro()}</b>. Escolha os animais que entram no PDF — o consolidado é calculado só com os selecionados.</p>
+     <div style="display:flex;gap:8px"><button class="btn ghost sm" onclick="pdfSelAll(true)">Marcar todos</button><button class="btn ghost sm" onclick="pdfSelAll(false)">Limpar</button></div>
+     <div style="max-height:44vh;overflow:auto;display:grid;gap:6px">
+       ${animais.map(a=>`<label class="pdf-sel"><input type="checkbox" class="pdfChk" value="${a.id}" checked> <b>${brincoLabel(a)}</b> · ${escapeHtml(racaNome(a.racaId))} ${badge(a.status)}${ehTerceiro(a)?' <span class="tag">terceiro</span>':''}</label>`).join('')}
+     </div>
+   </div>
+   <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Cancelar</button><button class="btn" onclick="pdfResultadosGerar()">Gerar PDF</button></div>`);
+}
+function pdfResultadosGerar(){
+  const ids=[...document.querySelectorAll('.pdfChk')].filter(c=>c.checked).map(c=>c.value);
+  if(!ids.length) return toast('Selecione ao menos um animal','err');
+  const linhas=ids.map(animalByCod).filter(Boolean).map(linhaResultado);
+  const desc=descFiltro();
+  closeModal(); printDoc(`Resultados por porco — ${desc}`, `<p style="font-size:12px;margin:0 0 8px">${linhas.length} animal(is) · período ${desc} · margem = lucro ÷ investimento · rentabilidade ao mês = margem ÷ meses investidos</p>`+resultadosTabela(linhas));
+}
+
 function viewGestao(){
   const animais=animaisPeriodo().slice().sort((a,b)=>brincoLabel(a).localeCompare(brincoLabel(b)));
   if(!animais.length) return `<div class="page-head"><div><div class="eyebrow">Auditoria</div><h1>Gestão</h1><p>Custos, peso, receita e lucro por animal.</p></div></div>${filtroBar()}
